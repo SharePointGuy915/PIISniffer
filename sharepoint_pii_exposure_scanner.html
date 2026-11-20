@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SharePoint PII Exposure Scanner</title>
+<!--
+  SETUP REQUIRED:
+  1) Register a Single-page application (SPA) in Microsoft Entra ID.
+  2) Add this file's deployed URL as a SPA redirect URI.
+  3) Add delegated Microsoft Graph permissions: Sites.Read.All and Files.Read.All.
+     Admin consent may be required by your tenant.
+  4) Replace TENANT_ID and CLIENT_ID below.
+  5) Deploy from an approved HTTPS location. Do not open as file://.
+  This client-side prototype uses Microsoft Graph Search and searches only content
+  the signed-in user is permitted to access. It does not bypass SharePoint permissions.
+  Validate the results and the owner-resolution method with your tenant administrators.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--navy:#10243a;--blue:#1769aa;--teal:#087e8b;--bg:#f3f6fa;--ink:#182433;--muted:#617184;--line:#dce4ec;--red:#b42318;--green:#087443}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,Arial,sans-serif}
+header{background:linear-gradient(115deg,#10243a,#174c70);color:white;padding:27px max(24px,calc((100% - 1180px)/2))}
+header h1{font-size:25px;margin:0 0 7px}header p{margin:0;color:#d7e5f0;font-size:13px}
+main{max-width:1180px;margin:25px auto;padding:0 20px}.notice{padding:13px 16px;border-radius:9px;background:#fff7e6;border:1px solid #f3d28b;color:#6f4b00;font-size:13px;line-height:1.55;margin-bottom:18px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:17px}.card{background:white;border:1px solid var(--line);border-radius:12px;padding:20px;box-shadow:0 3px 12px #10243a0a}
+.card h2{font-size:16px;margin:0 0 15px}.wide{grid-column:1/-1}label{display:block;font-size:12px;font-weight:700;color:#435366;margin:0 0 6px}
+input,textarea{width:100%;border:1px solid #cbd6e1;border-radius:7px;padding:10px 11px;font:13px Inter,Arial;color:var(--ink);background:#fff}
+input:focus,textarea:focus{outline:2px solid #b9dcf7;border-color:var(--blue)}.row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+button{border:0;border-radius:7px;padding:10px 15px;font:600 13px Inter;cursor:pointer}
+.primary{background:var(--blue);color:white}.secondary{background:#eaf1f7;color:#173b5c}.danger{background:#fff0ef;color:var(--red)}
+button:disabled{opacity:.45;cursor:not-allowed}.actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:12px}
+.small{font-size:11px;color:var(--muted);line-height:1.5}.status{font-size:12px;margin-top:12px;white-space:pre-wrap;color:var(--muted)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.chip{font-size:11px;background:#edf3f8;border-radius:20px;padding:5px 8px;color:#29445d}
+.stats{display:flex;gap:12px;flex-wrap:wrap;margin:15px 0}.stat{background:#f4f8fb;border:1px solid var(--line);padding:10px 14px;border-radius:8px;min-width:130px}.stat strong{display:block;font-size:20px}.stat span{font-size:11px;color:var(--muted)}
+.tablewrap{overflow:auto;border:1px solid var(--line);border-radius:8px}table{width:100%;border-collapse:collapse;font-size:12px;min-width:850px}th{background:#edf3f8;text-align:left;color:#34495e;font-size:11px}th,td{padding:10px;border-bottom:1px solid var(--line);vertical-align:top}td a{color:var(--blue);word-break:break-all}tr:last-child td{border-bottom:0}
+footer{max-width:1180px;margin:18px auto 35px;padding:0 20px;color:var(--muted);font-size:11px}
+@media(max-width:760px){.grid{grid-template-columns:1fr}.wide{grid-column:auto}.row{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>SharePoint Online · PII Exposure Scanner</h1>
+  <p>Search accessible SharePoint content for potential sensitive-information exposure and export a findings register.</p>
+</header>
+<main>
+  <div class="notice"><strong>Important:</strong> This is a discovery aid, not a DLP or compliance certification tool. Search results indicate possible matches and require human review. The app records location metadata only; it does not download, display, or export document contents or the matched text. Search is permission-trimmed to the signed-in account.</div>
+  <div class="grid">
+    <section class="card">
+      <h2>1 · Connect to Microsoft 365</h2>
+      <div class="row">
+        <div><label for="tenant">Microsoft Entra tenant ID or domain</label><input id="tenant" placeholder="contoso.onmicrosoft.com"></div>
+        <div><label for="client">App registration (client) ID</label><input id="client" placeholder="00000000-0000-0000-0000-000000000000"></div>
+      </div>
+      <div class="actions">
+        <button class="primary" id="signIn">Sign in</button>
+        <button class="secondary" id="signOut" disabled>Sign out</button>
+      </div>
+      <div class="status" id="authStatus">Not connected. Enter the tenant and client IDs, then sign in.</div>
+      <p class="small">Required delegated Microsoft Graph permissions: <b>Sites.Read.All</b> and <b>Files.Read.All</b>. Your administrator may need to grant consent. Register this app as a Single-page application (SPA) and use an HTTPS redirect URI.</p>
+    </section>
+    <section class="card">
+      <h2>2 · Configure the scan</h2>
+      <label for="keywords">Search terms (one phrase per line)</label>
+      <textarea id="keywords" rows="8">Alpha Roster
+Full name
+Social Security number
+SSN
+Driver's license
+Mailing address
+Credit card
+Passport
+Financial
+Medical records
+SF50
+DD214
+DD2875
+SAAR-N
+DOB
+Birth
+Race
+Religion
+Weight
+Maiden
+SF182
+Identification
+Home Address
+Travel Expense Report
+Spouse
+Alias
+EVAL
+FITREP
+LES
+Recall</textarea>
+      <div class="row" style="margin-top:12px">
+        <div><label for="limit">Maximum results to collect</label><input id="limit" type="number" min="1" max="1000" value="200"></div>
+        <div><label for="scope">Search content type</label><input id="scope" value="SharePoint files" disabled></div>
+      </div>
+      <div class="actions"><button class="primary" id="scan" disabled>Start scan</button><button class="secondary" id="cancel" disabled>Stop scan</button></div>
+      <div class="status" id="scanStatus">Connect to Microsoft 365 to begin.</div>
+    </section>
+    <section class="card wide">
+      <h2>3 · Findings</h2>
+      <div class="stats">
+        <div class="stat"><strong id="count">0</strong><span>Potential matches</span></div>
+        <div class="stat"><strong id="sites">0</strong><span>Distinct site URLs</span></div>
+        <div class="stat"><strong id="terms">0</strong><span>Search terms used</span></div>
+      </div>
+      <div class="actions" style="margin:0 0 13px">
+        <button class="primary" id="export" disabled>Export Excel workbook (.xlsx)</button>
+        <button class="secondary" id="csv" disabled>Export CSV</button>
+        <button class="danger" id="clear">Clear findings</button>
+      </div>
+      <div class="tablewrap">
+        <table><thead><tr><th>Command / site</th><th>Matched search term</th><th>URL where found</th><th>Site owners</th><th>Review status</th></tr></thead>
+        <tbody id="results"><tr><td colspan="5" class="small">No findings yet.</td></tr></tbody></table>
+      </div>
+      <p class="small" style="margin-top:10px">“Command / site” uses the SharePoint site title where available. Site owners are best-effort metadata and may be unavailable depending on permissions and tenant configuration. Confirm owners in the SharePoint admin center before assigning remediation.</p>
+    </section>
+  </div>
+</main>
+<footer>Use only under your organization’s approved security, privacy, records-management, and incident-response procedures. Do not use this tool to access information beyond your authorized duties.</footer>
+
+<script src="https://alcdn.msauth.net/browser/3.26.1/js/msal-browser.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const GRAPH = "https://graph.microsoft.com/v1.0";
+  const SCOPES = ["Sites.Read.All", "Files.Read.All"];
+  let msalApp = null, account = null, accessToken = null, stopRequested = false;
+  let findings = [];
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  function status(id, msg){ $(id).textContent = msg; }
+  function updateUI(){
+    $("signOut").disabled = !account; $("scan").disabled = !account;
+    $("export").disabled = findings.length === 0; $("csv").disabled = findings.length === 0;
+    $("count").textContent = findings.length;
+    $("sites").textContent = new Set(findings.map(x=>x.siteUrl).filter(Boolean)).size;
+  }
+  function config(){
+    const tenant = $("tenant").value.trim(), clientId = $("client").value.trim();
+    if(!tenant || !clientId) throw new Error("Enter both the tenant ID/domain and app registration client ID.");
+    return {auth:{clientId,authority:`https://login.microsoftonline.com/${tenant}`,redirectUri:location.origin+location.pathname},cache:{cacheLocation:"sessionStorage"}};
+  }
+  async function getToken(){
+    if(!msalApp) msalApp = new msal.PublicClientApplication(config());
+    const req = {scopes:SCOPES,account};
+    try { const r=await msalApp.acquireTokenSilent(req); return r.accessToken; }
+    catch(e){ const r=await msalApp.acquireTokenPopup({scopes:SCOPES}); account=r.account; return r.accessToken; }
+  }
+  async function graph(path, options={}){
+    const token = await getToken();
+    const r=await fetch(GRAPH+path,{...options,headers:{Authorization:"Bearer "+token,"Content-Type":"application/json",...(options.headers||{})}});
+    if(!r.ok){let detail="";try{detail=(await r.json()).error.message}catch{};throw new Error(`Microsoft Graph ${r.status}: ${detail||r.statusText}`);}
+    return r.status===204?null:r.json();
+  }
+  $("signIn").onclick=async()=>{
+    try{
+      msalApp=new msal.PublicClientApplication(config()); await msalApp.initialize();
+      const r=await msalApp.loginPopup({scopes:SCOPES}); account=r.account; accessToken=r.accessToken;
+      status("authStatus","Signed in as "+(account.username||account.name)+".");
+      $("scan").disabled=false; $("signOut").disabled=false;
+    }catch(e){status("authStatus","Sign-in failed: "+e.message);}
+  };
+  $("signOut").onclick=async()=>{if(msalApp&&account)await msalApp.logoutPopup({account});account=null;accessToken=null;updateUI();status("authStatus","Signed out.");};
+  $("cancel").onclick=()=>{stopRequested=true;status("scanStatus","Stop requested. Finishing the current request…");};
+
+  async function ownerNames(siteId){
+    // Graph site permissions can expose granted principals, but do not consistently
+    // enumerate the SharePoint Owners group. Return only principals explicitly marked owner.
+    try{
+      const p=await graph(`/sites/${encodeURIComponent(siteId)}/permissions`);
+      const names=[];
+      for(const item of (p.value||[])){
+        const roles=item.roles||[];
+        if(!roles.includes("owner")) continue;
+        const g=item.grantedToV2||item.grantedTo;
+        if(g?.user?.displayName) names.push(g.user.displayName);
+        if(g?.group?.displayName) names.push(g.group.displayName);
+      }
+      return [...new Set(names)].join("; ") || "Not available from Graph permissions";
+    }catch{return "Not available — verify in SharePoint Admin Center";}
+  }
+  function queryString(term){
+    // Graph Search uses KQL. Escape embedded quotes; each phrase is searched as an exact phrase.
+    return `"${term.replace(/"/g,'\\"')}"`;
+  }
+  async function searchTerm(term, max){
+    const body={requests:[{entityTypes:["driveItem"],query:{queryString:queryString(term)},from:0,size:Math.min(100,max),fields:["name","webUrl","createdDateTime","lastModifiedDateTime","parentReference","sharepointIds"]}]};
+    let data=await graph("/search/query",{method:"POST",body:JSON.stringify(body)});
+    const hits=data?.value?.[0]?.hitsContainers?.[0];
+    let hitsList=hits?.hits||[];
+    const total=hits?.total||hitsList.length;
+    // Graph Search API paging uses from/size; cap total to the user-selected maximum.
+    for(let offset=100;offset<Math.min(total,max)&&hitsList.length<max;offset+=100){
+      body.requests[0].from=offset; body.requests[0].size=Math.min(100,max-offset);
+      data=await graph("/search/query",{method:"POST",body:JSON.stringify(body)});
+      const more=data?.value?.[0]?.hitsContainers?.[0]?.hits||[];
+      if(!more.length)break; hitsList=hitsList.concat(more);
+    }
+    return hitsList.slice(0,max).map(h=>h.resource||h);
+  }
+  $("scan").onclick=async()=>{
+    const terms=$("keywords").value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+    const max=Math.max(1,Math.min(1000,Number($("limit").value)||200));
+    if(!terms.length){status("scanStatus","Enter at least one search term.");return;}
+    stopRequested=false; $("scan").disabled=true; $("cancel").disabled=false;
+    $("terms").textContent=terms.length;
+    const seen=new Set();
+    try{
+      let done=0;
+      for(const term of terms){
+        if(stopRequested)break;
+        status("scanStatus",`Searching ${done+1} of ${terms.length}: ${term}`);
+        const docs=await searchTerm(term,max);
+        for(const d of docs){
+          const url=d.webUrl||d.parentReference?.webUrl||"";
+          const siteId=d.sharepointIds?.siteId||d.parentReference?.siteId||"";
+          const key=(url||d.id||"")+"|"+term;
+          if(seen.has(key))continue; seen.add(key);
+          const siteUrl=d.parentReference?.siteUrl|| (url?new URL(url).origin:"");
+          const siteTitle=d.parentReference?.siteTitle||d.sharepointIds?.siteTitle||"SharePoint site (verify command)";
+          findings.push({command:siteTitle,term,url,siteUrl,siteId,owners:"Lookup pending",review:"Needs human review",fileName:d.name||""});
+        }
+        // Resolve owner metadata once per site, not once per file.
+        const siteIds=[...new Set(findings.filter(f=>f.owners==="Lookup pending"&&f.siteId).map(f=>f.siteId))];
+        for(const sid of siteIds){const owners=await ownerNames(sid);findings.filter(f=>f.siteId===sid).forEach(f=>f.owners=owners);}
+        done++; render();
+      }
+      status("scanStatus",stopRequested?`Scan stopped. ${findings.length} potential matches collected.`:`Scan complete. ${findings.length} potential matches collected.`);
+    }catch(e){status("scanStatus","Scan error: "+e.message+"\nCheck app permissions, admin consent, tenant policy, and Graph Search availability.");}
+    finally{$("scan").disabled=!account;$("cancel").disabled=true;updateUI();}
+  };
+  function render(){
+    $("results").innerHTML=findings.length?findings.map((f,i)=>`<tr>
+      <td>${esc(f.command)}</td><td>${esc(f.term)}</td>
+      <td>${f.url?`<a href="${esc(f.url)}" target="_blank" rel="noopener">Open item</a>`:"URL unavailable"}</td>
+      <td>${esc(f.owners)}</td><td>${esc(f.review)}</td></tr>`).join(""):'<tr><td colspan="5" class="small">No findings yet.</td></tr>';
+    updateUI();
+  }
+  function exportRows(){return findings.map(f=>({"Command / Site":f.command,"Matched Search Term":f.term,"URL Location":f.url,"Site Owners":f.owners,"Review Status":f.review}));}
+  $("export").onclick=()=>{
+    if(!window.XLSX){alert("Excel export library did not load. Check network policy or use CSV export.");return;}
+    const wb=XLSX.utils.book_new(), ws=XLSX.utils.json_to_sheet(exportRows());
+    ws["!cols"]=[{wch:32},{wch:25},{wch:75},{wch:48},{wch:22}];
+    XLSX.utils.book_append_sheet(wb,ws,"PII Findings");
+    XLSX.writeFile(wb,"SharePoint_PII_Findings_"+new Date().toISOString().slice(0,10)+".xlsx");
+  };
+  $("csv").onclick=()=>{
+    const rows=exportRows(), cols=Object.keys(rows[0]||{});
+    const csv=[cols,...rows.map(r=>cols.map(c=>r[c]??""))].map(row=>row.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(",")).join("\r\n");
+    const a=document.createElement("a"),u=URL.createObjectURL(new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8"}));
+    a.href=u;a.download="SharePoint_PII_Findings.csv";a.click();URL.revokeObjectURL(u);
+  };
+  $("clear").onclick=()=>{findings=[];render();status("scanStatus","Findings cleared.");};
+  updateUI();
+})();
+</script>
+</body>
+</html>
